@@ -1,9 +1,20 @@
 """ Defined the main interface classes
 """
 
-import struct
-from pypack import redis_connection
-from pypack import protocol
+import struct, socket, copy
+import gevent
+from . import redis_connection
+from . import protocol
+
+class AsyncObj(object):
+    def __init__(self, value):
+        self.value = value
+
+    def set(self, value):
+        self.value = value
+
+    def val(self):
+        return self.value
 
 class PyPack(object):
     """ PyPack main class
@@ -22,14 +33,17 @@ class PyPack(object):
     def read_packet(cls, fileno):
         """ Read a packet object from file-like object
         """
-        buff = fileno.read(5)
-        if len(buffer) < 5:
+        try:
+            buff = fileno.read(5)
+            if len(buff) < 5:
+                return None
+            (_, remaining_length) = struct.unpack("!3sH", buff)
+            payload = fileno.read(remaining_length)
+            if len(payload) < remaining_length:
+                return None
+            return protocol.Packet.decode(buff + payload)
+        except socket.error:
             return None
-        (_, remaining_length) = struct.unpack("!3BH", buff)
-        payload = fileno.read(remaining_length)
-        if len(payload) < remaining_length:
-            return None
-        return protocol.Packet.decode(buff + payload)
 
     @classmethod
     def handle(cls, scope, packet, callback):
@@ -41,19 +55,93 @@ class PyPack(object):
             elif packet.qos == protocol.QOS1:
                 reply = protocol.Packet(protocol.MSG_TYPE_ACK, protocol.QOS0, False, packet.msg_id)
                 protocol.Packet.encode(reply)
-                # TODO
+                cls.redis().save(scope, reply)
+                callback(scope, packet.payload)
+            elif packet.qos == protocol.QOS2:
+                cls.redis().receive(scope, packet.msg_id, packet.payload)
+                reply = protocol.Packet(protocol.MSG_TYPE_RECEIVED, protocol.QOS0, False, packet.msg_id)
+                protocol.Packet.encode(reply)
+                cls.redis().save(scope, reply)
+        elif packet.msg_type == protocol.MSG_TYPE_ACK:
+            cls.redis().confirm(scope, packet.msg_id)
+        elif packet.msg_type == protocol.MSG_TYPE_RECEIVED:
+            cls.redis().confirm(scope, packet.msg_id)
+            reply = protocol.Packet(protocol.MSG_TYPE_RELEASE, protocol.QOS1, False, packet.msg_id)
+            protocol.Packet.encode(reply)
+            cls.redis().save(scope, reply)
+        elif packet.msg_type == protocol.MSG_TYPE_RELEASE:
+            payload = cls.redis().release(scope, packet.msg_id)
+            if payload is not None:
+                callback(scope, payload)
+            reply = protocol.Packet(protocol.MSG_TYPE_COMPLETED, protocol.QOS0, False, packet.msg_id)
+            protocol.Packet.encode(reply)
+            cls.redis().save(scope, reply)
+        elif packet.msg_type == protocol.MSG_TYPE_COMPLETED:
+            cls.redis().confirm(scope, packet.msg_id)
 
     @classmethod
-    def parse(cls, scope, fileno, callback):
-        """ Parser buff string, and trigger callback
+    def read(cls, scope, fileno, callback, cont):
+        """ Decode Packet from fileno and handle it
         """
-        if not isinstance(fileno, str):
-            raise TypeError("argument fileno must be file-like object, not %s" % \
-                type(fileno).__name__)
-        while True:
+        while cont.val():
             packet = cls.read_packet(fileno)
             if packet is None:
+                cont.set(False)
                 break
             cls.handle(scope, packet, callback)
+            gevent.sleep(1)
 
+    @classmethod
+    def write(cls, scope, fileno, cont):
+        """ Read Packet from storage and write into fileno
+        """
+        while cont.val():
+            packets = cls.redis().unconfirmed(scope, 5)
+            if packets is not None and len(packets) > 0:
+                try:
+                    for packet in packets:
+                        retry_packet = cls.retry(packet)
+                        if retry_packet is not None:
+                            cls.redis().save(scope, retry_packet) 
+                        fileno.write(packet.buff)
+                    fileno.flush()
+                except socket.error:
+                    cont.set(False)
+                    break
+            gevent.sleep(1)
 
+    @classmethod
+    def retry(cls, packet):
+        if packet.qos == protocol.QOS0:
+            return None
+        retry_packet = None
+        if packet.retry_times > 0:
+            retry_packet = copy.deepcopy(packet)
+            retry_packet.retry_times += 1
+            retry_packet.timestamp = int((datetime.datetime.now() + datetime.timedelta(seconds=retry_packet.retry_times * 5)).timestamp())
+        else:
+            retry_packet = protocol.Packet(packet.msg_type, packet.qos, True, packet.msg_id, packet.payload)
+            protocol.Packet.encode(reply)
+            retry_packet.retry_times = 1
+            retry_packet.timestamp = int((datetime.datetime.now() + datetime.timedelta(seconds=retry_packet.retry_times * 5)).timestamp())
+        return retry_packet
+
+    # public methods
+
+    @classmethod
+    def hold(cls, scope, fileno, callback):
+        """ Hold on file object, and trigger callback
+        """
+        if not hasattr(fileno, 'read') or not hasattr(fileno, 'write'):
+            raise TypeError("argument fileno must be file-like object, not %s" % \
+                type(fileno).__name__)
+        cont = AsyncObj(True)
+        read_thread = gevent.spawn(cls.read, scope, fileno, callback, cont)
+        write_thread = gevent.spawn(cls.write, scope, fileno, cont)
+        gevent.joinall([read_thread, write_thread])
+
+    @classmethod
+    def commit(cls, scope, payload, qos=protocol.QOS0):
+        packet = protocol.Packet(protocol.MSG_TYPE_SEND, 0, False, cls.redis().unique_id(scope), payload)
+        protocol.Packet.encode(packet)
+        cls.redis().save(scope, packet)

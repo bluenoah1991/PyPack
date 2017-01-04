@@ -14,7 +14,7 @@ QOS0 = 0
 QOS1 = 1
 QOS2 = 2
 
-MAX_DATETIME = int((datetime.datetime(2500, 1, 1) - datetime.datetime(1970, 1, 1)).total_seconds())
+# MAX_DATETIME = int((datetime.datetime(2500, 1, 1) - datetime.datetime(1970, 1, 1)).total_seconds())
 
 class Packet(object):
     """ This is a class that describe an incoming or outgoing message
@@ -38,7 +38,7 @@ class Packet(object):
         self.qos = qos
         self.dup = dup
         self.msg_id = msg_id
-        if not isinstance(payload, str):
+        if payload is not None and not isinstance(payload, str):
             raise TypeError("parameter payload must be str, not %s" % type(payload).__name__)
         self.payload = payload
         if payload is None:
@@ -48,7 +48,7 @@ class Packet(object):
         self.total_length = 5 + self.remaining_length
         self.confirm = False
         self.retry_times = 0
-        self.timestamp = MAX_DATETIME
+        self.timestamp = 0
         self.buff = None
 
     @staticmethod
@@ -68,11 +68,11 @@ class Packet(object):
     def decode(buff):
         """ Convert buff string to packet object
         """
-        (fixed_header, msg_id, remaining_length) = struct.unpack("!BHH", buff)
+        (fixed_header, msg_id, remaining_length) = struct.unpack("!BHH", buff[:5])
         msg_type = fixed_header >> 4
         qos = (fixed_header & 0xf) >> 2
         dup = (fixed_header & 0x3) >> 1
-        (_, payload) = struct.unpack("!5B%ss" % remaining_length, buff)
+        (_, payload) = struct.unpack("!5s%ss" % remaining_length, buff)
         packet = Packet(msg_type, qos, dup, msg_id, payload)
-        (packet.buff,) = struct.unpack("!%ss" % packet.total_length, buff)
+        packet.buff = buff
         return packet
