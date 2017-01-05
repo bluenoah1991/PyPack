@@ -1,7 +1,7 @@
 """ Defined the main interface classes
 """
 
-import struct, socket, copy
+import struct, socket, copy, datetime
 import gevent
 from . import redis_connection
 from . import protocol
@@ -89,7 +89,6 @@ class PyPack(object):
                 cont.set(False)
                 break
             cls.handle(scope, packet, callback)
-            gevent.sleep(1)
 
     @classmethod
     def write(cls, scope, fileno, cont):
@@ -98,32 +97,35 @@ class PyPack(object):
         while cont.val():
             packets = cls.redis().unconfirmed(scope, 5)
             if packets is not None and len(packets) > 0:
+                for packet in packets:
+                    retry_packet = cls.retry(packet)
+                    if retry_packet is not None:
+                        cls.redis().save(scope, retry_packet) 
                 try:
                     for packet in packets:
-                        retry_packet = cls.retry(packet)
-                        if retry_packet is not None:
-                            cls.redis().save(scope, retry_packet) 
                         fileno.write(packet.buff)
                     fileno.flush()
                 except socket.error:
                     cont.set(False)
                     break
-            gevent.sleep(1)
+            else:
+                gevent.sleep(1)
 
     @classmethod
     def retry(cls, packet):
         if packet.qos == protocol.QOS0:
             return None
         retry_packet = None
+        now = int((datetime.datetime.now() - datetime.datetime(1970, 1, 1)).total_seconds())
         if packet.retry_times > 0:
             retry_packet = copy.deepcopy(packet)
             retry_packet.retry_times += 1
-            retry_packet.timestamp = int((datetime.datetime.now() + datetime.timedelta(seconds=retry_packet.retry_times * 5)).timestamp())
+            retry_packet.timestamp = now + retry_packet.retry_times * 5
         else:
             retry_packet = protocol.Packet(packet.msg_type, packet.qos, True, packet.msg_id, packet.payload)
-            protocol.Packet.encode(reply)
+            protocol.Packet.encode(retry_packet)
             retry_packet.retry_times = 1
-            retry_packet.timestamp = int((datetime.datetime.now() + datetime.timedelta(seconds=retry_packet.retry_times * 5)).timestamp())
+            retry_packet.timestamp = now + retry_packet.retry_times * 5
         return retry_packet
 
     # public methods
@@ -142,6 +144,6 @@ class PyPack(object):
 
     @classmethod
     def commit(cls, scope, payload, qos=protocol.QOS0):
-        packet = protocol.Packet(protocol.MSG_TYPE_SEND, 0, False, cls.redis().unique_id(scope), payload)
+        packet = protocol.Packet(protocol.MSG_TYPE_SEND, qos, False, cls.redis().unique_id(scope), payload)
         protocol.Packet.encode(packet)
         cls.redis().save(scope, packet)

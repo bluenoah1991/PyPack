@@ -1,7 +1,7 @@
 """ Redis connection functions
 """
 
-import os
+import os, datetime
 import redis
 from . import protocol
 
@@ -23,19 +23,30 @@ PQADD = "redis.call('ZADD', KEYS[1]..':pq', ARGV[1], ARGV[2])\n" \
 """Popup N item from Indexable Priority Queue
 Example:
 
-EVAL PQPOP 1 ns 10
+EVAL PQPOP 1 ns 10 1483598266
 
 Parameters
 
 Keys 1. Namespace
 Args 1. Limit
+Args 2. Now
 """
 PQPOP = "local t = {}\n" \
-    "for i, k in pairs(redis.call('ZRANGE', KEYS[1]..':pq', 0, ARGV[1])) do\n" \
-        "local v = redis.call('HGET', KEYS[1]..':index', k)\n" \
-        "table.insert(t, #t + 1, v)\n" \
+    "local len = 0\n" \
+    "local key = nil\n" \
+    "for i, k in pairs(redis.call('ZRANGE', KEYS[1]..':pq', 0, ARGV[1], 'WITHSCORES')) do\n" \
+        "if i % 2 == 1 then\n" \
+            "key = k\n" \
+        "else\n" \
+            "if tonumber(ARGV[2]) < tonumber(k) then break end\n" \
+            "len = len + 1\n" \
+            "local v = redis.call('HGET', KEYS[1]..':index', key)\n" \
+            "table.insert(t, #t + 1, v)\n" \
+        "end\n" \
     "end\n" \
-    "redis.call('ZREMRANGEBYRANK', KEYS[1]..':pq', 0, ARGV[1])\n" \
+    "if len > 0 then\n" \
+        "redis.call('ZREMRANGEBYRANK', KEYS[1]..':pq', 0, len)\n" \
+    "end\n" \
     "return t"
 
 """Remove from Indexable Priority Queue
@@ -98,7 +109,8 @@ class NamespacedRedis(object):
             self.eval_score(packet), packet.msg_id, self._encode_val(packet))
 
     def unconfirmed(self, scope, limit):
-        buffers = self.redis.eval(PQPOP, 1, "%s:%s" % (self.namespace, scope), limit)
+        now = int((datetime.datetime.now() - datetime.datetime(1970, 1, 1)).total_seconds())
+        buffers = self.redis.eval(PQPOP, 1, "%s:%s" % (self.namespace, scope), limit, now)
         return map(lambda buffer: self._decode_val(buffer), buffers)
 
     def confirm(self, scope, msg_id):
