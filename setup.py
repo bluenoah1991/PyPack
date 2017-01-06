@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-	name = 'pypack',
+	name = 'pypack2',
 	version = '0.1',
 	author = 'CodeMeow5',
 	author_email = 'codemeow@yahoo.com',
