@@ -89,6 +89,7 @@ class PyPack(object):
                 cont.set(False)
                 break
             cls.handle(scope, packet, callback)
+            gevent.sleep(0) # yield to other thread
 
     @classmethod
     def write(cls, scope, fileno, cont):
@@ -108,6 +109,7 @@ class PyPack(object):
                 except socket.error:
                     cont.set(False)
                     break
+                gevent.sleep(0) # yield to other thread
             else:
                 gevent.sleep(1)
 
