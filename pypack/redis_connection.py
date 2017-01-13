@@ -89,7 +89,7 @@ class NamespacedRedis(object):
         return "%s:%s:%s" % (retry_times, timestamp, packet.buff)
 
     def _decode_val(self, val):
-        [retry_times, timestamp, buff] = val.split(":")
+        [retry_times, timestamp, buff] = val.split(":", 2)
         retry_times = int(retry_times)
         timestamp = int(timestamp)
         packet = protocol.Packet.decode(buff)

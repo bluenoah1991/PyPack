@@ -9,9 +9,10 @@ def recieved_msg(scope, payload):
     # PyPack.commit(scope, "Third reply message! (Qos 2)", 2)
 
 def test(socket, address):
-    PyPack.commit(address[1], "First bootstrap message!", 0)
-    PyPack.commit(address[1], "Second bootstrap message! (Qos 1)", 1)
-    PyPack.commit(address[1], "Third bootstrap message! (Qos 2)", 2)
+    # PyPack.commit(address[1], "First bootstrap message!", 0)
+    # PyPack.commit(address[1], "Second bootstrap message! (Qos 1)", 1)
+    # PyPack.commit(address[1], "Third bootstrap message! (Qos 2)", 2)
+    PyPack.commit(address[1], ": (Qos 2)", 2)
     PyPack.hold(address[1], socket.makefile(), recieved_msg)
 
 if __name__ == '__main__':
