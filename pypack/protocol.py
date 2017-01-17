@@ -72,7 +72,10 @@ class Packet(object):
         msg_type = fixed_header >> 4
         qos = (fixed_header & 0xf) >> 2
         dup = (fixed_header & 0x3) >> 1
-        (_, payload) = struct.unpack("!5s%ss" % remaining_length, buff)
-        packet = Packet(msg_type, qos, dup, msg_id, payload)
-        packet.buff = buff
-        return packet
+        if len(buff) >= 5 + remaining_length:
+            (_, payload) = struct.unpack("!5s%ss" % remaining_length, buff[:5 + remaining_length])
+            packet = Packet(msg_type, qos, dup, msg_id, payload)
+            packet.buff = buff
+            return packet
+        else:
+            return None

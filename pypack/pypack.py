@@ -130,6 +130,30 @@ class PyPack(object):
             retry_packet.timestamp = now + retry_packet.retry_times * 5
         return retry_packet
 
+    @classmethod
+    def split(cls, buffer):
+        """ Split input buffer into multi packets
+        """
+        packets = []
+        length = len(buffer)
+        offset = 0
+        while True:
+            if offset + 5 > length:
+                break
+            packet = protocol.Packet.decode(buffer[offset:])
+            if packet is None:
+                break
+            packets.append(packet)
+            offset += packet.total_length
+        return packets
+
+    @classmethod
+    def combine(cls, packets):
+        """ Combine multi packets into buffer
+        """
+        buffers = map(lambda packet: packet.buff, packets)
+        return "".join(buffers)
+
     # public methods
 
     @classmethod
@@ -143,6 +167,24 @@ class PyPack(object):
         read_thread = gevent.spawn(cls.read, scope, fileno, callback, cont)
         write_thread = gevent.spawn(cls.write, scope, fileno, cont)
         gevent.joinall([read_thread, write_thread])
+
+    @classmethod
+    def parse_body(cls, scope, body, callback):
+        """ Parse HTTP body and return retry packet as response
+        """
+        packets = cls.split(body)
+        for packet in packets:
+            cls.handle(scope, packet, callback)
+
+        # build response body
+        packets = cls.redis().unconfirmed(scope, 5)
+        if packets is None or len(packets) == 0:
+            return ''
+        for packet in packets:
+            retry_packet = cls.retry(packet)
+            if retry_packet is not None:
+                cls.redis().save(scope, retry_packet)
+        return cls.combine(packets)
 
     @classmethod
     def commit(cls, scope, payload, qos=protocol.QOS0):
