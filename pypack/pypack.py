@@ -163,6 +163,13 @@ class PyPack(object):
         if not hasattr(fileno, 'read') or not hasattr(fileno, 'write'):
             raise TypeError("argument fileno must be file-like object, not %s" % \
                 type(fileno).__name__)
+        if type(scope).__name__ == 'function':
+            first_msg = cls.read_packet(fileno)
+            if first_msg is None:
+                return None
+            scope = scope(first_msg)
+        if scope is None:
+            return None
         cont = AsyncObj(True)
         read_thread = gevent.spawn(cls.read, scope, fileno, callback, cont)
         write_thread = gevent.spawn(cls.write, scope, fileno, cont)
