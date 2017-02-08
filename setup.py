@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
 	name = 'pypack2',
-	version = '0.1.1',
+	version = '0.1.2',
 	author = 'CodeMeow5',
 	author_email = 'codemeow@yahoo.com',
 	description = 'Python HttpPack server-side plugin based on gevent',
